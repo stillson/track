@@ -1,0 +1,212 @@
+#!/usr/bin/env python
+
+import difflib
+from optparse import OptionParser
+import os
+import glob
+import shutil
+import itertools
+import time
+import datetime
+
+
+class RepoCreationError(Exception): pass
+
+NullGen = (i for i in [])
+
+class Repo(object):
+    """Class representing a repository"""
+    def __init__(self, directory):
+        super(Repo, self).__init__()
+        self.directory = directory + "/"
+        if directory[-1] != '/':
+            self.directory += '/'
+
+        if not os.path.isdir(directory):
+            os.mkdir(directory)
+            
+        if not os.access(directory, os.X_OK):
+            raise RepoCreationError
+
+    def getFile(self, a_file):
+        return RepoFile(a_file, self)
+        
+    def getAll(self, show_all=False):
+        if show_all:
+            return (os.path.basename(i) for i in glob.iglob(self.directory + '*'))
+        else:
+            return (os.path.basename(i)[:-3] for i in glob.iglob(self.directory + '*.01'))
+
+class RepoFile(object):
+    """class representing a file in a repo"""
+    def __init__(self, name, repo):
+        super(RepoFile, self).__init__()
+        self.name = name
+        # if it doesn't exist, raise an exception
+        open(name,'r')
+        self.repo = repo
+        self.revisions = glob.glob(repo.directory + name + ".*")
+        self.revisions.sort
+        self._last = None
+
+    @property
+    def last(self):
+        if self._last is not None:
+            return self._last
+
+        if self.revisions:
+            self._last = self.revisions[-1]
+        else:
+            self._last = []
+
+        return self._last
+
+    def newIndex(self):
+        if self.last:
+            return ".%02d" %(int(self.last.split('.')[-1]) + 1)
+        else:
+            return ".01"
+
+    def revIndex(self):
+        if len(self.revisions) > 1:
+            return ".%02d" %(int(self.last.split('.')[-1]) - 1)
+        else:
+            return ".01"
+
+    def update(self):
+        # if there are no diffs, don't update
+        if self.last and not any(self.getDiff()):
+            return
+
+        shutil.copyfile(self.name, self.repo.directory + self.name + self.newIndex())
+
+    def getDiff(self):
+        if self.last == []:
+            # if no last, track the file and return empty generator
+            self.update()
+            return NullGen
+            
+        with open(self.last) as lFile:
+            last = lFile.readlines()
+
+        with open(self.name) as curFile:
+            current = curFile.readlines()
+
+        d = difflib.unified_diff(last, current, self.last, self.name, n=1)
+        return (i.strip() for i in d)
+
+    def diffErator(self, pairs):
+        rv = itertools.chain()
+        for aPair in pairs:
+            revs = (os.path.basename(aPair[0]), os.path.basename(aPair[1]))
+            title = ( "\n", "%s <-> %s" % revs, "--------------------")
+            rv = itertools.chain(rv, title)
+
+            with open(aPair[0]) as oldFile:
+                old_lines = oldFile.readlines()
+
+            with open(aPair[1]) as newFile:
+                new_lines = newFile.readlines()
+
+            d = difflib.unified_diff(old_lines, new_lines, aPair[0], aPair[1], n=1)
+            rv = itertools.chain(rv, (i.strip() for i in d))
+
+        return rv
+
+    def progDiff(self):
+        """Prints diffs from rev 1-2, 2-3, 3-4,.... """
+
+        if self.last == []:
+            return NullGen
+             
+        pairs = zip(self.revisions, self.revisions[1:]) 
+
+        return self.diffErator(pairs)
+
+
+    def fRelDiff(self):
+        """Prints diffs from rev 1-2, 1-3, 1-4,.... """
+        if self.last == []:
+            return NullGen
+             
+        pairs = zip(itertools.repeat(self.revisions[0]), self.revisions[1:]) 
+
+        return self.diffErator(pairs)
+
+    def listRevs(self):
+        def timeDel(file_name):
+            return str(datetime.timedelta(seconds=int(time.time() - os.stat(file_name).st_ctime)))
+
+        return (os.path.basename(i) + " " + timeDel(i) for i in self.revisions)
+        
+    def revert(self):
+        shutil.copyfile(self.repo.directory + self.name + self.revIndex(), self.name)
+
+def parseArgs():
+    parser = OptionParser()
+    
+    #parser.add_argument('in_file', metavar='file', type=str, nargs="*",
+    #                   help='file to track')
+
+    parser.add_option('-d', help = 'diff with previous',       action="store_true",)
+    parser.add_option('-l', help = 'list revisions of a file', action="store_true",)
+    parser.add_option('-r', help = 'list files in repo',       action="store_true",)
+    parser.add_option('-R', help = 'list all files in repo',   action="store_true",)
+    parser.add_option('-t', help = 'track a file (default)',   action="store_true",)
+    parser.add_option('-b', help = 'revert to last version',   action="store_true",)
+    parser.add_option('-p', help = 'progressive diff',         action="store_true",)
+    parser.add_option('-P', help = 'full relative diff',       action="store_true",)
+
+    return parser.parse_args()
+
+def main():
+    options, args = parseArgs()
+
+    repo = Repo(os.getcwd() + '/.track/')
+    
+    if options.d:
+        for aFile in args:
+            for d in repo.getFile(aFile).getDiff():
+                print d
+        return
+    
+    if options.l:
+        for aFile in args:
+            print
+            print aFile
+            print "---------"
+            for aRev in repo.getFile(aFile).listRevs():
+                print aRev
+            print
+        return
+        
+    if options.r or options.R:
+        for aFile in repo.getAll(options.R):
+            print aFile
+        return
+
+    if options.b:
+        for aFile in args:
+            repo.getFile(aFile).update() #save current
+            repo.getFile(aFile).revert()
+        return
+
+    def mp(x):
+        print x
+
+    if options.p:
+        for aFile in args:
+            map(mp, repo.getFile(aFile).progDiff())
+        return
+
+    if options.P:
+        for aFile in args:
+            map(mp, repo.getFile(aFile).fRelDiff())
+        return
+
+    #default case, just track it
+    for aFile in args:
+        repo.getFile(aFile).update()
+        
+if __name__ == '__main__':
+    main()
