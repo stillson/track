@@ -36,6 +36,8 @@ import datetime
 import json
 import collections
 
+VERSION=0.1
+
 
 class RepoCreationError(Exception): pass
 
