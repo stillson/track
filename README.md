@@ -16,6 +16,7 @@ And that's pretty much it. It's not a collaboration tool, like git or perforce. 
 tracker.
 
 to use:
+
     >ls
     foo bar bang
     >track foo bar bang  #start tracking the files
