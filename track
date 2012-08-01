@@ -25,7 +25,6 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-
 import difflib
 from optparse import OptionParser
 import os
@@ -34,11 +33,53 @@ import shutil
 import itertools
 import time
 import datetime
+import json
+import collections
 
 
 class RepoCreationError(Exception): pass
 
 NullGen = (i for i in [])
+
+class commitInfo(collections.MutableMapping):
+    def __init__(self, directory):
+        super(commitInfo, self).__init__()
+        self.directory = directory
+        #don't need setup. Will be called from an existing repo
+        self.fileName = self.directory + "CommitInfo"
+        if os.path.exists(self.fileName):
+            with open(self.fileName, 'r') as f:
+                self.infoDict = json.load(f)
+        else:
+            self.infoDict = {}
+
+    def save(self):
+        with open(self.fileName + ".tmp", 'w') as f:
+            json.dump(self.infoDict, f)
+
+        os.rename(self.fileName + ".tmp", self.fileName)
+
+    def __getitem__(self, k):
+        return self.infoDict[k] 
+
+    def __setitem__(self, k, v):
+        if k in self.infoDict:
+            self.infoDict[k] = self.infoDict[k] + "\n" + v
+        else:
+            self.infoDict[k] = v
+        
+    def __delitem__(self, k):
+        del self.infoDict[k]
+    
+    def __contains__(self, k):
+        return k in self.infoDict
+        
+    def __iter__(self):
+        return iter(self.infoDict)
+
+    def __len__(self):
+        return len(self.infoDict)
+
 
 class Repo(object):
     """Class representing a repository"""
@@ -54,6 +95,8 @@ class Repo(object):
         if not os.access(directory, os.X_OK):
             raise RepoCreationError
 
+        self.commIn = commitInfo(self.directory)
+
     def getFile(self, a_file):
         return RepoFile(a_file, self)
         
@@ -62,6 +105,15 @@ class Repo(object):
             return (os.path.basename(i) for i in glob.iglob(self.directory + '*'))
         else:
             return (os.path.basename(i)[:-3] for i in glob.iglob(self.directory + '*.01'))
+
+    def addComment(self, k,v):
+        self.commIn[k] = v
+
+    def getComment(self, k):
+        return self.commIn[k]
+
+    def close(self):
+        self.commIn.save()
 
 class RepoFile(object):
     """class representing a file in a repo"""
@@ -99,13 +151,16 @@ class RepoFile(object):
         else:
             return ".01"
 
-    def update(self):
+    def update(self, comment=None):
+        if comment:
+            self.repo.addComment(self.name+self.newIndex(), comment)
+
         # if there are no diffs, don't update
         if self.last and not any(self.getDiff()):
             return
 
         shutil.copyfile(self.name, self.repo.directory + self.name + self.newIndex())
-
+        
     def getDiff(self):
         if self.last == []:
             # if no last, track the file and return empty generator
@@ -163,7 +218,12 @@ class RepoFile(object):
         def timeDel(file_name):
             return str(datetime.timedelta(seconds=int(time.time() - os.stat(file_name).st_ctime)))
 
-        return (os.path.basename(i) + " " + timeDel(i) for i in self.revisions)
+        def comment(filename):
+            if filename in self.repo.commIn:
+                return self.repo.getComment(filename)
+            return ""
+               
+        return (os.path.basename(i) + " " + timeDel(i) + " " + comment(os.path.basename(i)) for i in self.revisions)
         
     def revert(self):
         shutil.copyfile(self.repo.directory + self.name + self.revIndex(), self.name)
@@ -182,6 +242,7 @@ def parseArgs():
     parser.add_option('-b', help = 'revert to last version',   action="store_true",)
     parser.add_option('-p', help = 'progressive diff',         action="store_true",)
     parser.add_option('-P', help = 'full relative diff',       action="store_true",)
+    parser.add_option('-c', help = 'add comment',              dest="comment")
 
     return parser.parse_args()
 
@@ -204,17 +265,20 @@ def main():
             for aRev in repo.getFile(aFile).listRevs():
                 print aRev
             print
+        repo.close()
         return
         
     if options.r or options.R:
         for aFile in repo.getAll(options.R):
             print aFile
+        repo.close()
         return
 
     if options.b:
         for aFile in args:
             repo.getFile(aFile).update() #save current
             repo.getFile(aFile).revert()
+        repo.close()
         return
 
     def mp(x):
@@ -223,16 +287,19 @@ def main():
     if options.p:
         for aFile in args:
             map(mp, repo.getFile(aFile).progDiff())
+        repo.close()
         return
 
     if options.P:
         for aFile in args:
             map(mp, repo.getFile(aFile).fRelDiff())
+        repo.close()
         return
 
     #default case, just track it
     for aFile in args:
-        repo.getFile(aFile).update()
+        repo.getFile(aFile).update(options.comment)
         
+    repo.close()
 if __name__ == '__main__':
     main()
