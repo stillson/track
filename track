@@ -66,12 +66,14 @@ class commitInfo(collections.MutableMapping):
 
     def __setitem__(self, k, v):
         if k in self.infoDict:
-            self.infoDict[k] = self.infoDict[k] + "\n" + v
+            self.infoDict[k] = self.infoDict[k] + ":" + v
         else:
             self.infoDict[k] = v
+        self.save()
         
     def __delitem__(self, k):
         del self.infoDict[k]
+        self.save()
     
     def __contains__(self, k):
         return k in self.infoDict
@@ -114,9 +116,6 @@ class Repo(object):
     def getComment(self, k):
         return self.commIn[k]
 
-    def close(self):
-        self.commIn.save()
-
 class RepoFile(object):
     """class representing a file in a repo"""
     def __init__(self, name, repo):
@@ -154,13 +153,14 @@ class RepoFile(object):
             return ".01"
 
     def update(self, comment=None):
-        if comment:
-            self.repo.addComment(self.name+self.newIndex(), comment)
-
         # if there are no diffs, don't update
         if self.last and not any(self.getDiff()):
+            if comment:
+                self.repo.addComment(os.path.basename(self.last), comment)
             return
 
+        if comment:
+            self.repo.addComment(os.path.basename(self.name)+self.newIndex(), comment)
         shutil.copyfile(self.name, self.repo.directory + self.name + self.newIndex())
         
     def getDiff(self):
@@ -267,20 +267,17 @@ def main():
             for aRev in repo.getFile(aFile).listRevs():
                 print aRev
             print
-        repo.close()
         return
         
     if options.r or options.R:
         for aFile in repo.getAll(options.R):
             print aFile
-        repo.close()
         return
 
     if options.b:
         for aFile in args:
             repo.getFile(aFile).update() #save current
             repo.getFile(aFile).revert()
-        repo.close()
         return
 
     def mp(x):
@@ -289,19 +286,16 @@ def main():
     if options.p:
         for aFile in args:
             map(mp, repo.getFile(aFile).progDiff())
-        repo.close()
         return
 
     if options.P:
         for aFile in args:
             map(mp, repo.getFile(aFile).fRelDiff())
-        repo.close()
         return
 
     #default case, just track it
     for aFile in args:
         repo.getFile(aFile).update(options.comment)
         
-    repo.close()
 if __name__ == '__main__':
     main()
