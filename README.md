@@ -40,3 +40,8 @@ The basic usage is `track filename` copies a new revision into the repository if
 `track -d filename` diffs with the last check in.
 
 There are more options. Read the code :)
+
+licensing
+---------
+
+Berkeley License. Just let me know if you use it.
